@@ -37,8 +37,7 @@
 // --- Enumeração para o Estado do Canal ADC ---
 typedef enum {
     ADC_CHANNEL_STATE_DISABLED,
-    ADC_CHANNEL_STATE_NORMAL,
-    ADC_CHANNEL_STATE_ALERT      // Valor acima do limiar de segurança
+    ADC_CHANNEL_STATE_NORMAL
 } AdcChannelState_t;
 
 // --- Estrutura (Struct) para o Canal ADC ---
@@ -115,16 +114,9 @@ void processAdcChannel(AdcChannel_t *pChannel)
     // 4. Converte o valor filtrado para tensão
     pChannel->filteredVoltage = convertADCToVoltage(pChannel->filteredValueADC);
 
-    // 5. Verifica o estado do canal com base em um limiar de segurança
-    //    (Limiar simples: 80% do fundo de escala, ou seja, ≈ 2,64 V)
-    if (pChannel->filteredVoltage > 2.64F)
-    {
-        pChannel->state = ADC_CHANNEL_STATE_ALERT;
-    }
-    else
-    {
-        pChannel->state = ADC_CHANNEL_STATE_NORMAL;
-    }
+    //5. Aqui deverá ser incluída a lógica de detecção de limiar excedido
+    pChannel->state = ADC_CHANNEL_STATE_NORMAL;
+
 }
 
 // Simula uma leitura do ADC gerando um valor que varia lentamente.
