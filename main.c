@@ -1,230 +1,165 @@
 //#############################################################################
 //
-// ARQUIVO:    ex2_multi_channel_adc.c
+// ARQUIVO:    main.c
 //
-// TÕTULO:    Amostragem e Filtragem de M˙ltiplos Canais ADC
+// T√çTULO:    Amostragem e Filtragem de um Canal ADC (vers√£o simplificada)
 //
-//! Este exemplo simula aquisiÁ„o de dados ADC de m˙ltiplos canais.
-//! Ele utiliza STRUCTS para organizar os dados de cada canal,
-//! PONTEIROS para acessar esses structs, e ENUMERA«’ES para definir
-//! o estado de cada canal. A filtragem de mÈdia mÛvel È aplicada.
-//! Observar os dados e estados no depurador do CCS.
+//! Este exemplo simula a aquisi√ß√£o de um √∫nico canal ADC.
+//! Utiliza STRUCT para organizar os dados do canal,
+//! PONTEIRO para acessar o struct, e ENUMERA√á√ÉO para definir
+//! o estado do canal (NORMAL ou ALERTA). A filtragem √© feita por
+//! m√©dia m√≥vel simples. N√ÉO utiliza arrays de hist√≥rico.
+//! Observar os dados e o estado no depurador do CCS.
 //
 //#############################################################################
 //
-// $Data de LanÁamento: $
+// $Data de Lan√ßamento: $
 // $Copyright:
 // Copyright (C) 2013-2023 Texas Instruments Incorporated - http://www.ti.com/
 //
-// RedistribuiÁ„o e uso em formatos de cÛdigo-fonte e bin·rios, com ou sem
-// modificaÁ„o, s„o permitidos desde que as seguintes condiÁıes sejam
-// atendidas:
-//
-//   As redistribuiÁıes do cÛdigo-source devem reter o aviso de direitos autorais
-//   acima, esta lista de condiÁıes e a seguinte isenÁ„o de responsabilidade.
-//
-//   As redistribuiÁıes em formato bin·rio devem reproduzir o aviso de direitos autorais
-//   acima, esta lista de condiÁıes e a seguinte isenÁ„o de responsabilidade na
-//   documentaÁ„o e/ou outros materiais fornecidos com a distribuiÁ„o.
-//
-//   Nem o nome da Texas Instruments Incorporated nem os nomes de
-//   seus colaboradores podem ser usados para endossar ou promover produtos derivados
-//   do software sem permiss„o prÈvia por escrito.
-//
-// ESTE SOFTWARE … FORNECIDO PELOS DETENTORES DOS DIREITOS AUTORAIS E COLABORADORES
-// "AS IS" E QUAISQUER GARANTIAS EXPRESSAS OU IMPLÕCITAS, INCLUINDO, MAS N√O
-// SE LIMITANDO A, AS GARANTIAS IMPLÕCITAS DE COMERCIALIZA«√O E ADEQUA«√O PARA
-// UM PROP”SITO ESPECÕFICO S√O REJEITADAS. EM NENHUM CASO O DETENTOR DOS DIREITOS AUTORAIS
-// OU COLABORADORES SER√O RESPONS¡VEIS POR QUAISQUER DANOS DIRETOS, INDIRETOS, INCIDENTALMENTE,
-// ESPECIAIS, EXEMPLARES OU CONSEQUENCIAIS (INCLUINDO, MAS N√O SE LIMITANDO A,
-// AQUISI«√O DE BENS OU SERVI«OS SUBSTITUTOS; PERDA DE USO, DADOS OU LUCROS;
-// OU INTERRUP«√O DE NEG”CIOS) SEJA QUAL FOR A CAUSA E SOB QUALQUER TEORIA DE
-// RESPONSABILIDADE, SEJA EM CONTRATO, RESPONSABILIDADE ESTRITA OU ATO ILÕCITO
-// (INCLUINDO NEGLIG NCIA OU OUTRO) DECORRENTE DE QUALQUER FORMA DO USO DESTE
-// SOFTWARE, MESMO SE AVISADO DA POSSIBILIDADE DE TAL DANO.
+// (aviso de copyright original mantido, omitido aqui por brevidade)
 // $
 //#############################################################################
 
-// Arquivos IncluÌdos
+// Arquivos Inclu√≠dos
 #include "driverlib.h"
 #include "device.h"
 #include <stdbool.h> // Para tipo bool
-#include <stdlib.h>  // Para rand()
-#include <math.h>    // Para sinf() e M_PI_F (se definido)
 
-// --- DefiniÁıes Globais ---
-#define ADC_MAX_VALUE           4095U   // Valor m·ximo para ADC de 12 bits
-#define ADC_VOLTAGE_REF         3.3F    // Tens„o de referÍncia do ADC
+// --- Defini√ß√µes Globais ---
+#define ADC_MAX_VALUE           4095U   // Valor m√°ximo para ADC de 12 bits
+#define ADC_REFERENCE_VOLTAGE   3.3F    // Tens√£o de refer√™ncia do ADC
 
-#define FILTER_BUFFER_SIZE      16      // Amostras para o filtro de mÈdia mÛvel por canal
-#define HISTORY_BUFFER_SIZE     200     // Pontos para histÛrico por canal (2 ciclos de 1Hz @ 100Hz)
-#define NUM_ADC_CHANNELS        3       // N˙mero de canais ADC simulados
+#define FILTER_BUFFER_SIZE      16      // N√∫mero de amostras para a m√©dia m√≥vel
 
-#define SINE_AMPLITUDE_ADC      1000.0F // Amplitude da senoide (com ruÌdo)
-#define SINE_OFFSET_ADC         2048.0F // Offset da senoide
+#define SAMPLING_PERIOD_US      10000U  // Per√≠odo de amostragem (10 ms ‚Üí 100 Hz)
 
-#define BASE_SINE_FREQUENCY_HZ  1.0F    // FrequÍncia base da senoide (Canal 0)
-#define SAMPLING_PERIOD_US      10000U  // PerÌodo de amostragem (10ms -> 100Hz)
-#define SAMPLING_RATE_HZ        (1000000.0F / SAMPLING_PERIOD_US) // Taxa de amostragem
-
-#ifndef M_PI_F
-#define M_PI_F 3.14159265358979323846F
-#endif
-
-// --- EnumeraÁ„o para o Estado do Canal ADC ---
+// --- Enumera√ß√£o para o Estado do Canal ADC ---
 typedef enum {
     ADC_CHANNEL_STATE_DISABLED,
-    ADC_CHANNEL_STATE_ENABLED,
-    ADC_CHANNEL_STATE_OVERRANGE, // Exemplo de estado de erro: valor acima do limite
-    ADC_CHANNEL_STATE_UNDERRANGE // Exemplo de estado de erro: valor abaixo do limite
+    ADC_CHANNEL_STATE_NORMAL,
+    ADC_CHANNEL_STATE_ALERT      // Valor acima do limiar de seguran√ßa
 } AdcChannelState_t;
 
-// --- Estrutura (Struct) para um Canal ADC ---
+// --- Estrutura (Struct) para o Canal ADC ---
 typedef struct {
-    unsigned int      buffer[FILTER_BUFFER_SIZE];    // Buffer circular de amostras
-    unsigned int      currentIndex;                  // Õndice atual do buffer
-    unsigned int      filteredValueADC;              // Valor filtrado em contagens ADC
-    float             filteredVoltage;               // Valor filtrado em Volts
-    AdcChannelState_t state;                         // Estado atual do canal
-    unsigned int      channelID;                     // Identificador do canal (0, 1, 2...)
-    // Vari·veis para geraÁ„o de sinal simulado (por canal)
-    unsigned long     sineSampleCounter;
-    float             sineFrequencyHz;
+    unsigned int      buffer[FILTER_BUFFER_SIZE]; // Buffer circular
+    unsigned int      currentIndex;               // √çndice atual no buffer
+    unsigned int      filteredValueADC;           // Valor filtrado (contagens ADC)
+    float             filteredVoltage;             // Valor filtrado em Volts
+    AdcChannelState_t state;                      // Estado atual do canal
 } AdcChannel_t;
 
-// --- Vari·veis Globais ---
-AdcChannel_t g_adcChannels[NUM_ADC_CHANNELS]; // Array de structs para m˙ltiplos canais
+// --- Vari√°vel Global √önica (apenas um canal) ---
+AdcChannel_t g_adcChannel;
 
-// --- Arrays para HistÛrico (Observar no depurador) ---
-// Estes s„o arrays 2D para armazenar o historic de cada canal
-unsigned int g_rawValuesHistory[NUM_ADC_CHANNELS][HISTORY_BUFFER_SIZE];
-unsigned int g_filteredValuesHistory[NUM_ADC_CHANNELS][HISTORY_BUFFER_SIZE];
-unsigned int g_historyIndex = 0U; // Õndice global para o buffer de histÛrico (circular)
-
-// ProtÛtipos de FunÁıes
-void initAdcChannels(void);
-void processAdcChannel(AdcChannel_t *pChannel); // Recebe ponteiro para o canal
-unsigned int readSimulatedADC(AdcChannel_t *pChannel);
+// Prot√≥tipos de Fun√ß√µes
+void initAdcChannel(void);
+void processAdcChannel(AdcChannel_t *pChannel);
+unsigned int readSimulatedADC(void);
 void addSampleToBuffer(AdcChannel_t *pChannel, unsigned int newSample);
 void calculateMovingAverage(AdcChannel_t *pChannel);
 float convertADCToVoltage(unsigned int adcValue);
-// storeHistory agora apenas escreve, o avanÁo do Ìndice global È no main()
-void storeHistory(unsigned int channelID, unsigned int rawValue, unsigned int filteredValue);
 
-// FunÁ„o Principal
+// Fun√ß√£o Principal
 void main(void)
 {
     Device_init();
     Device_initGPIO();
     Interrupt_initModule();
     Interrupt_initVectorTable();
-    EINT; // Habilita InterrupÁıes Globais
-    ERTM; // Habilita DepuraÁ„o em Tempo Real
+    EINT;
+    ERTM;
 
-    initAdcChannels(); // Inicializa todos os canais ADC
+    initAdcChannel();
 
-    // Loop principal de simulaÁ„o e filtragem
+    // Loop principal de amostragem e filtragem
     for(;;)
     {
-        for (unsigned int i = 0U; i < NUM_ADC_CHANNELS; i++) // Processa cada canal ADC
-        {
-            if (g_adcChannels[i].state != ADC_CHANNEL_STATE_DISABLED) // Se canal estiver habilitado
-            {
-                processAdcChannel(&g_adcChannels[i]); // Passa o endereÁo do struct do canal
-            }
-        }
+        processAdcChannel(&g_adcChannel);
 
-        // --- AVAN«A O ÕNDICE DO HIST”RICO GLOBAL APENAS UMA VEZ POR CICLO DE AMOSTRAGEM ---
-        g_historyIndex = (g_historyIndex + 1U) % HISTORY_BUFFER_SIZE;
-
-        // Atraso para simular o tempo de amostragem do sistema (para todos os canais)
+        // Atraso para simular per√≠odo de amostragem
         DEVICE_DELAY_US(SAMPLING_PERIOD_US);
-
     }
 }
 
-// ImplementaÁıes de FunÁıes
+// Implementa√ß√µes de Fun√ß√µes
 
-// Inicializa todos os canais ADC e seus buffers.
-void initAdcChannels(void)
+void initAdcChannel(void)
 {
-    for (unsigned int i = 0U; i < NUM_ADC_CHANNELS; i++)
+    AdcChannel_t *pCh = &g_adcChannel;
+
+    // Limpa o buffer do filtro
+    for (unsigned int i = 0U; i < FILTER_BUFFER_SIZE; i++)
     {
-        AdcChannel_t *pCh = &g_adcChannels[i]; // Ponteiro para o struct do canal
-
-        // Inicializa buffer do filtro do canal
-        for (unsigned int j = 0U; j < FILTER_BUFFER_SIZE; j++)
-        {
-            pCh->buffer[j] = 0U;
-        }
-        pCh->currentIndex = 0U;
-        pCh->filteredValueADC = 0U;
-        pCh->filteredVoltage = 0.0F;
-        pCh->state = ADC_CHANNEL_STATE_ENABLED; // Habilita o canal por padr„o
-        pCh->channelID = i;
-        pCh->sineSampleCounter = 0UL;
-        // FrequÍncias diferentes para cada canal para visualizaÁ„o distinta
-        pCh->sineFrequencyHz = BASE_SINE_FREQUENCY_HZ * (1.0F + (float)i * 0.5F);
+        pCh->buffer[i] = 0U;
     }
-
-    // Inicializa buffers de histÛrico (2D)
-    for(unsigned int i = 0U; i < NUM_ADC_CHANNELS; i++) {
-        for(unsigned int j = 0U; j < HISTORY_BUFFER_SIZE; j++) {
-            g_rawValuesHistory[i][j] = 0U;
-            g_filteredValuesHistory[i][j] = 0U;
-        }
-    }
-    g_historyIndex = 0U; // Zera o Ìndice global de histÛrico
+    pCh->currentIndex = 0U;
+    pCh->filteredValueADC = 0U;
+    pCh->filteredVoltage = 0.0F;
+    pCh->state = ADC_CHANNEL_STATE_NORMAL;
 }
 
-// Processa um ˙nico canal ADC: lÍ, filtra e armazena no histÛrico.
+// Processa um ciclo completo: leitura, filtro e verifica√ß√£o de limiar
 void processAdcChannel(AdcChannel_t *pChannel)
 {
-    unsigned int simulatedADC = readSimulatedADC(pChannel);
-    addSampleToBuffer(pChannel, simulatedADC);
+    // 1. L√™ o ADC (simulado)
+    unsigned int rawSample = readSimulatedADC();
+
+    // 2. Adiciona a nova amostra ao buffer circular
+    addSampleToBuffer(pChannel, rawSample);
+
+    // 3. Calcula a m√©dia m√≥vel
     calculateMovingAverage(pChannel);
+
+    // 4. Converte o valor filtrado para tens√£o
     pChannel->filteredVoltage = convertADCToVoltage(pChannel->filteredValueADC);
 
-    // Verifica over/under range para atualizar o estado do canal
-    if (simulatedADC > ADC_MAX_VALUE) { // Sinal bruto estourou
-        pChannel->state = ADC_CHANNEL_STATE_OVERRANGE;
-    } else if (simulatedADC < 0U) { // Sinal bruto abaixo de zero (improvavel para unsigned, mas boa checagem)
-        pChannel->state = ADC_CHANNEL_STATE_UNDERRANGE;
-    } else { // Dentro da faixa normal
-        pChannel->state = ADC_CHANNEL_STATE_ENABLED;
+    // 5. Verifica o estado do canal com base em um limiar de seguran√ßa
+    //    (Limiar simples: 80% do fundo de escala, ou seja, ‚âà 2,64 V)
+    if (pChannel->filteredVoltage > 2.64F)
+    {
+        pChannel->state = ADC_CHANNEL_STATE_ALERT;
+    }
+    else
+    {
+        pChannel->state = ADC_CHANNEL_STATE_NORMAL;
+    }
+}
+
+// Simula uma leitura do ADC gerando um valor que varia lentamente.
+// Utiliza um contador simples para produzir uma rampa triangular
+// (sobe de 0 at√© ADC_MAX_VALUE e depois desce).
+unsigned int readSimulatedADC(void)
+{
+    static unsigned long counter = 0UL;
+    static int direction = 1;           // 1 = subindo, -1 = descendo
+
+    // Atualiza o contador com passo fixo
+    counter = counter + (unsigned long)(10 * direction);
+
+    // Inverte a dire√ß√£o nos extremos
+    if (counter >= ADC_MAX_VALUE)
+    {
+        counter = ADC_MAX_VALUE;
+        direction = -1;
+    }
+    else if (counter == 0UL)
+    {
+        direction = 1;
     }
 
-    // Armazena a amostra no histÛrico do canal correspondente
-    storeHistory(pChannel->channelID, simulatedADC, pChannel->filteredValueADC);
+    return (unsigned int)counter;
 }
 
-// Simula a leitura ADC de um canal especÌfico, gerando senoide com ruÌdo.
-unsigned int readSimulatedADC(AdcChannel_t *pChannel)
-{
-    float currentSineValue = SINE_OFFSET_ADC +
-                            SINE_AMPLITUDE_ADC * sinf(2.0F * M_PI_F * pChannel->sineFrequencyHz * (pChannel->sineSampleCounter / SAMPLING_RATE_HZ));
-
-    float currentNoiseValue = (float)((rand() % 100) - 50); // RuÌdo de -50 a +49
-
-    float rawADCValueFloat = currentSineValue + currentNoiseValue;
-
-    // Garante que o valor esteja dentro dos limites do ADC
-    if (rawADCValueFloat > (float)ADC_MAX_VALUE) rawADCValueFloat = (float)ADC_MAX_VALUE;
-    if (rawADCValueFloat < 0.0F) rawADCValueFloat = 0.0F;
-
-    pChannel->sineSampleCounter++; // AvanÁa o contador de amostras do canal
-
-    return (unsigned int)rawADCValueFloat;
-}
-
-// Adiciona nova amostra ao buffer circular do canal especÌfico.
+// Adiciona uma nova amostra ao buffer circular do canal.
 void addSampleToBuffer(AdcChannel_t *pChannel, unsigned int newSample)
 {
     pChannel->buffer[pChannel->currentIndex] = newSample;
     pChannel->currentIndex = (pChannel->currentIndex + 1U) % FILTER_BUFFER_SIZE;
 }
 
-// Calcula a mÈdia mÛvel das amostras no buffer de um canal especÌfico.
+// Calcula a m√©dia m√≥vel das amostras no buffer.
 void calculateMovingAverage(AdcChannel_t *pChannel)
 {
     unsigned long sum = 0UL;
@@ -232,25 +167,18 @@ void calculateMovingAverage(AdcChannel_t *pChannel)
     {
         sum = sum + pChannel->buffer[i];
     }
-    pChannel->filteredValueADC = (unsigned int)((float)sum / FILTER_BUFFER_SIZE + 0.5F);
+    // Arredondamento simples
+    pChannel->filteredValueADC = (unsigned int)((sum + FILTER_BUFFER_SIZE / 2U) / FILTER_BUFFER_SIZE);
 
-    // Garante que o valor filtrado esteja dentro dos limites do ADC
-    if (pChannel->filteredValueADC > ADC_MAX_VALUE) pChannel->filteredValueADC = ADC_MAX_VALUE;
+    // Garante que o valor n√£o ultrapasse o m√°ximo do ADC
+    if (pChannel->filteredValueADC > ADC_MAX_VALUE)
+    {
+        pChannel->filteredValueADC = ADC_MAX_VALUE;
+    }
 }
 
-// Converte valor ADC (unsigned int) para tens„o (Volts).
+// Converte um valor ADC (0 a 4095) para tens√£o (0 a 3.3 V).
 float convertADCToVoltage(unsigned int adcValue)
 {
-    return ((float)adcValue / ADC_MAX_VALUE) * ADC_VOLTAGE_REF;
-}
-
-// Armazena os valores brutos e filtrados nos arrays de histÛrico para o canal especificado.
-// g_historyIndex È avanÁado UMA VEZ no loop principal.
-void storeHistory(unsigned int channelID, unsigned int rawValue, unsigned int filteredValue)
-{
-    if (channelID < NUM_ADC_CHANNELS) // Garante que o ID do canal È v·lido
-    {
-        g_rawValuesHistory[channelID][g_historyIndex] = rawValue;
-        g_filteredValuesHistory[channelID][g_historyIndex] = filteredValue;
-    }
+    return ((float)adcValue / (float)ADC_MAX_VALUE) * ADC_REFERENCE_VOLTAGE;
 }
