@@ -34,18 +34,25 @@
 
 #define SAMPLING_PERIOD_US      10000U  // Período de amostragem (10 ms → 100 Hz)
 
+#define PINO_LED_ALERTA         31U     // GPIO do LED2 (Azul) na LaunchPadXL
+
+
+
 // --- Enumeração para o Estado do Canal ADC ---
 typedef enum {
     ADC_CHANNEL_STATE_DISABLED,
-    ADC_CHANNEL_STATE_NORMAL
+    ADC_CHANNEL_STATE_NORMAL,
+    ADC_CHANNEL_STATE_ALERT
 } AdcChannelState_t;
 
 // --- Estrutura (Struct) para o Canal ADC ---
 typedef struct {
+    unsigned int      rawValueADC;                // Sinal ADC bruto
     unsigned int      buffer[FILTER_BUFFER_SIZE]; // Buffer circular
     unsigned int      currentIndex;               // Índice atual no buffer
     unsigned int      filteredValueADC;           // Valor filtrado (contagens ADC)
-    float             filteredVoltage;             // Valor filtrado em Volts
+    unsigned int      limiteSeguranca;            // Limite de segurança para ADC filtrado
+    float             filteredVoltage;            // Valor filtrado em Volts              
     AdcChannelState_t state;                      // Estado atual do canal
 } AdcChannel_t;
 
@@ -65,6 +72,15 @@ void main(void)
 {
     Device_init();
     Device_initGPIO();
+
+    // Configura o pino como pino padrão de entrada/saída
+    GPIO_setPadConfig(PINO_LED_ALERTA, GPIO_PIN_TYPE_STD);
+    // Configura a direção do pino para SAÍDA (Output)
+    GPIO_setDirectionMode(PINO_LED_ALERTA, GPIO_DIR_MODE_OUT);
+    // Garante que o LED comece apagado (nível baixo / 0)
+    GPIO_writePin(PINO_LED_ALERTA, 1);
+
+
     Interrupt_initModule();
     Interrupt_initVectorTable();
     EINT;
@@ -76,6 +92,19 @@ void main(void)
     for(;;)
     {
         processAdcChannel(&g_adcChannel);
+
+       
+        // Se a struct avisar que entrou em alerta, acende o LED (escreve 1)
+        if (g_adcChannel.state == ADC_CHANNEL_STATE_ALERT)
+        {
+            GPIO_writePin(PINO_LED_ALERTA, 0); 
+        }
+        // Se a struct avisar que está normal, apaga o LED (escreve 0)
+        else 
+        {
+            GPIO_writePin(PINO_LED_ALERTA, 1); 
+        }
+        
 
         // Atraso para simular período de amostragem
         DEVICE_DELAY_US(SAMPLING_PERIOD_US);
@@ -97,6 +126,7 @@ void initAdcChannel(void)
     pCh->filteredValueADC = 0U;
     pCh->filteredVoltage = 0.0F;
     pCh->state = ADC_CHANNEL_STATE_NORMAL;
+    pCh->limiteSeguranca = 3500U;
 }
 
 // Processa um ciclo completo: leitura, filtro e verificação de limiar
@@ -105,17 +135,29 @@ void processAdcChannel(AdcChannel_t *pChannel)
     // 1. Lê o ADC (simulado)
     unsigned int rawSample = readSimulatedADC();
 
+    pChannel->rawValueADC = rawSample;
+
     // 2. Adiciona a nova amostra ao buffer circular
     addSampleToBuffer(pChannel, rawSample);
 
-    // 3. Calcula a média móvel
+    // 3. Resetar o estado quando o buffer circular reiniciar
+    
+    if (pChannel->currentIndex == 0U)
+    {
+        pChannel->state = ADC_CHANNEL_STATE_NORMAL;
+    }
+
+    // 4. Calcula a média móvel
     calculateMovingAverage(pChannel);
 
-    // 4. Converte o valor filtrado para tensão
+    // 5. Converte o valor filtrado para tensão
     pChannel->filteredVoltage = convertADCToVoltage(pChannel->filteredValueADC);
 
-    //5. Aqui deverá ser incluída a lógica de detecção de limiar excedido
-    pChannel->state = ADC_CHANNEL_STATE_NORMAL;
+    // 6. Detectar quando valor filtrado excede o limiar de segurança usando o #define
+    if (pChannel->filteredValueADC > pChannel->limiteSeguranca)
+    {
+        pChannel->state = ADC_CHANNEL_STATE_ALERT;
+    }
 
 }
 
